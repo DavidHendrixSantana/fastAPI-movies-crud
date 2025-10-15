@@ -1,0 +1,187 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Lint with flake8
+      run: |
+        # Stop the build if there are Python syntax errors or undefined names
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # Exit-zero treats all errors as warnings
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=88 --statistics
+
+    - name: Format check with black
+      run: |
+        black --check --diff .
+
+    - name: Import sorting check with isort
+      run: |
+        isort --check-only --diff .
+
+    - name: Type checking with mypy
+      run: |
+        mypy app/ --ignore-missing-imports
+      continue-on-error: true
+
+    - name: Run tests with coverage
+      run: |
+        pytest --cov=app --cov-report=xml --cov-report=html --cov-report=term-missing --cov-fail-under=80 -v
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+    - name: Upload coverage reports as artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: coverage-reports-${{ matrix.python-version }}
+        path: |
+          coverage.xml
+          htmlcov/
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install safety bandit
+
+    - name: Run safety check
+      run: |
+        safety check --json || true
+
+    - name: Run bandit security check
+      run: |
+        bandit -r app/ -f json || true
+
+  build:
+    needs: [test, security]
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Cache Docker layers
+      uses: actions/cache@v3
+      with:
+        path: /tmp/.buildx-cache
+        key: ${{ runner.os }}-buildx-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-buildx-
+
+    - name: Build Docker image
+      run: |
+        docker build -t movies-crud-api:${{ github.sha }} .
+        docker build -t movies-crud-api:latest .
+
+    - name: Test Docker image
+      run: |
+        # Run container in background
+        docker run -d --name test-container -p 8000:8000 movies-crud-api:${{ github.sha }}
+        
+        # Wait for container to start
+        sleep 30
+        
+        # Test health endpoint
+        curl -f http://localhost:8000/health || exit 1
+        
+        # Test API endpoints
+        curl -f http://localhost:8000/ || exit 1
+        
+        # Clean up
+        docker stop test-container
+        docker rm test-container
+
+    - name: Log in to Docker Hub (only on main/master branch)
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Push to Docker Hub (only on main/master branch)
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      run: |
+        docker tag movies-crud-api:latest ${{ secrets.DOCKER_USERNAME }}/movies-crud-api:latest
+        docker tag movies-crud-api:${{ github.sha }} ${{ secrets.DOCKER_USERNAME }}/movies-crud-api:${{ github.sha }}
+        docker push ${{ secrets.DOCKER_USERNAME }}/movies-crud-api:latest
+        docker push ${{ secrets.DOCKER_USERNAME }}/movies-crud-api:${{ github.sha }}
+
+  deploy:
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    environment: production
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Deploy notification
+      run: |
+        echo "Deployment would happen here"
+        echo "Image: movies-crud-api:${{ github.sha }}"
+        
+    # Example deployment step (uncomment and configure as needed)
+    # - name: Deploy to production
+    #   run: |
+    #     # Add your deployment commands here
+    #     # Examples:
+    #     # - Deploy to AWS ECS
+    #     # - Deploy to Kubernetes
+    #     # - Deploy to Heroku
+    #     # - Deploy to DigitalOcean App Platform
+    #     echo "Deploying to production..."

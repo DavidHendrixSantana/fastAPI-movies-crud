@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  movies-api:
+    build: .
+    container_name: movies-crud-api
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite:///./movies.db
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: Add PostgreSQL for production-like testing
+  postgres:
+    image: postgres:15-alpine
+    container_name: movies-postgres
+    environment:
+      POSTGRES_DB: movies_db
+      POSTGRES_USER: movies_user
+      POSTGRES_PASSWORD: movies_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    profiles: ["postgres"]
+
+  # API with PostgreSQL
+  movies-api-postgres:
+    build: .
+    container_name: movies-crud-api-postgres
+    ports:
+      - "8001:8000"
+    environment:
+      - DATABASE_URL=postgresql://movies_user:movies_password@postgres:5432/movies_db
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    profiles: ["postgres"]
+
+volumes:
+  postgres_data:
