@@ -175,13 +175,3 @@ jobs:
         echo "Deployment would happen here"
         echo "Image: movies-crud-api:${{ github.sha }}"
         
-    # Example deployment step (uncomment and configure as needed)
-    # - name: Deploy to production
-    #   run: |
-    #     # Add your deployment commands here
-    #     # Examples:
-    #     # - Deploy to AWS ECS
-    #     # - Deploy to Kubernetes
-    #     # - Deploy to Heroku
-    #     # - Deploy to DigitalOcean App Platform
-    #     echo "Deploying to production..."
